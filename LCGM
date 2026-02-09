@@ -1,0 +1,74 @@
+####ADHD-Latent class growth analysis
+
+install.packages("lcmm")
+library(lcmm)
+lcga1 <-hlme(y ~ time, subject = "ID", ng = 1, data = mydata) 
+lcga2 <-gridsearch(rep = 100, maxiter = 10, minit = lcga1,                   hlme(y ~ time, subject = "ID",                        ng = 2, data = mydata, mixture = ~ time)) 
+lcga3 <-gridsearch(rep = 100, maxiter = 10, minit = lcga1,                   hlme(y ~ time, subject = "ID",                        ng = 3, data = mydata, mixture = ~ time))
+
+
+
+data <- read.table("/home/disk7/zuyujuan/ABCD/ABCD_5.1/image/all_11868_four.txt", header = TRUE)
+data1 <- data[, c("src_subject_id", "age_0", "age_1", "age_2", "age_3")]
+library(reshape2)
+data2 <- melt(data1, id.vars = c("src_subject_id"),
+                  variable.name = "time", value.name = "age")
+library(dplyr)
+data2 <- data2 %>% arrange(src_subject_id)
+data2$time <- gsub("age_", "",data2$time)
+data2$time <- as.numeric(data2$time)
+
+data3 <- data[, c("src_subject_id","cbcl_adhd_0", "cbcl_adhd_1", "cbcl_adhd_2", "cbcl_adhd_3")]
+data4 <- melt(data3, id.vars = c("src_subject_id"),
+                  variable.name = "time", value.name = "cbcl_adhd")
+library(dplyr)
+data4 <- data4%>% arrange(src_subject_id)
+data4$time <- gsub("cbcl_adhd_", "",data4$time)
+data4$time <- as.numeric(data4$time)
+merged_data <- merge(data2, data4, by = c("src_subject_id", "time"))
+head(merged_data)
+dim(merged_data)
+write.table(merged_data, file = "/home/disk7/zuyujuan/ABCD/ABCD_5.1/image/model/LCGA/cbcl_adhd_test1.txt", sep = "\t", row.names = FALSE, col.names = TRUE)
+
+data <- read.table("/home/disk7/zuyujuan/ABCD/ABCD_5.1/image/model/LCGA/cbcl_adhd_test1.txt", sep = "\t", header = TRUE)
+
+unique_ids <- unique(data$src_subject_id)
+
+id_mapping <- match(data$src_subject_id, unique_ids)
+
+data$id_num <- id_mapping
+head(data)
+lcga1 <-hlme(cbcl_adhd ~ age, subject = "id_num", ng = 1, data = data)
+ 
+lcga2 <-gridsearch(rep = 100, maxiter = 10, minit = lcga1,                   hlme(cbcl_adhd  ~age, subject = "id_num",                        ng = 2, data = data, mixture = ~ age)) 
+
+lcga3 <-gridsearch(rep = 100, maxiter = 10, minit = lcga1,                   hlme(cbcl_adhd ~ age, subject = "id_num",                        ng = 3, data = data, mixture = ~ age))
+lcga4 <-gridsearch(rep = 100, maxiter = 10, minit = lcga1,                   hlme(cbcl_adhd ~ age, subject = "id_num",                        ng = 4, data = data, mixture = ~ age))
+lcga5 <-gridsearch(rep = 100, maxiter = 10, minit = lcga1,                   hlme(cbcl_adhd ~ age, subject = "id_num",                        ng = 5, data = data, mixture = ~ age))
+
+######查看模型结果
+summarytable(lcga1,lcga2,lcga3,lcga4,lcga5)
+
+summary(lcga3)
+####查看后验概率
+table_postprob <- postprob(lcga3)
+
+####结果可视化
+library(dplyr)
+#####试着将图例放在右上角
+newdata<-data.frame(age=seq(8,20,length=100))
+plotpred <- predictY(lcga3, newdata, var.time = "age", draws = TRUE)
+# 绘制预测结果
+plot(plotpred, lty = 1, xlab = "Age", ylab = "CBCL_ADHD", legend.loc = "topright", cex = 0.75)
+
+
+####整合数据集
+x<-lcga3$pprob[,1:2]
+newdata<-merge(data,x,by="id_num")
+head(newdata,20)
+####将数据newdata中的ID号和class分组提取出来，放在大文件里
+df1 <- newdata[, c("src_subject_id", "class")]
+df2 <- unique(df1)
+write.table(df2, file = "/home/disk7/zuyujuan/ABCD/ABCD_5.1/image/model/LCGA/cbcl_adhd_class.txt", sep = "\t", quote = FALSE, row.names = FALSE)
+
+
