@@ -1,0 +1,179 @@
+###"Combat" performs correction on the image data.
+library(sva)
+data <- read.table("/home/disk7/zuyujuan/ABCD/ABCD_5.1/image/cor/LMM/审稿修改/rs_fMRI/base/rsfmr_cor_all_dummy_base.txt", header = TRUE, sep = "\t")
+
+data_subset <- data[, c("src_subject_id", "site_id_T0", colnames(data)[138:553])]
+dim(data_subset)
+
+original_data <- data
+original_data$original_row_index <- 1:nrow(original_data)  
+
+complete_cases <- complete.cases(data_subset)
+data_cleaned <- data_subset[complete_cases, ]
+cat("完整数据样本数:", nrow(data_cleaned), "\n")
+cat("包含NA的样本数:", sum(!complete_cases), "\n")
+
+site_id <- as.factor(data_cleaned$site_id_T0)
+image_data <- data_cleaned[, -c(1,2)]
+
+if (length(site_id) != nrow(image_data)) {
+  stop("批次信息与数据行数不匹配！")
+}
+
+# ComBat校正
+cat("开始ComBat校正...\n")
+corrected_features <- ComBat(dat = t(as.matrix(image_data)), batch = site_id)
+corrected_features <- t(corrected_features)  
+
+corrected_data <- data_cleaned
+corrected_data[, -c(1,2)] <- corrected_features
+
+cat("验证数据对齐:\n")
+cat("校正数据ID:", head(corrected_data$src_subject_id), "\n")
+cat("校正前行索引:", head(which(complete_cases)), "\n")
+
+final_data <- original_data
+
+final_data[complete_cases, 138:553] <- corrected_data[, -c(1,2)]
+
+cat("\n=== 最终验证 ===\n")
+cat("原始数据维度:", dim(data), "\n")
+cat("最终数据维度:", dim(final_data), "\n")
+
+sample_check <- sample(which(complete_cases), min(5, sum(complete_cases)))
+for(i in sample_check) {
+  original_id <- data$src_subject_id[i]
+  final_id <- final_data$src_subject_id[i]
+  cat(sprintf("行%d: 原始ID=%s, 最终ID=%s, 匹配=%s\n", 
+              i, original_id, final_id, original_id == final_id))
+}
+
+final_data <- final_data[, -ncol(final_data)]  # 移除original_row_index列
+write.table(final_data, 
+            "/home/disk7/zuyujuan/ABCD/ABCD_5.1/image/cor/LMM/审稿修改/rs_fMRI/base/rsfmr_cor_all_dummy_base_combat.txt",
+            sep = "\t", row.names = FALSE, quote = FALSE)
+
+cat("数据合并完成！\n")
+cat("成功校正了", nrow(corrected_data), "个完整样本的影像数据\n")
+cat("保留了", sum(!complete_cases), "个包含NA的样本（未校正）\n")
+
+
+
+
+
+
+
+
+
+####Q2_T0
+data <- read.table("/home/disk7/zuyujuan/ABCD/ABCD_5.1/image/cor/LMM/审稿修改/rs_fMRI/base/rsfmr_cor_all_dummy_base_combat.txt", header = TRUE)
+
+var_columns <- names(data)[385:553]
+
+standardize_columns <- c("Q2_T0", "age_0", "sex1", "race1", "race2", "race3", "race4", "BMI_0", "highest_education", "demo_comb_income_v2", "puberty.score_T0", "ehi_y_ss_score_T0_1", "ehi_y_ss_score_T0_2", "rsfmri_meanmotion","Hypnotics_Sedatives_T0")
+
+data[standardize_columns] <- lapply(data[standardize_columns], scale)
+data[var_columns] <- lapply(data[var_columns], scale)
+
+all_results <- data.frame()
+
+for (i in var_columns) {
+  formula <- paste0(i, " ~ Q2_T0 + age_0 + sex1 + race1 + race2 + race3 + race4 + BMI_0 + highest_education + demo_comb_income_v2 + puberty.score_T0 + ehi_y_ss_score_T0_1 + ehi_y_ss_score_T0_2 + rsfmri_meanmotion + Hypnotics_Sedatives_T0")   
+  
+  
+  fm <- lm(formula, data = data) 
+  
+   correlation <- cor(data[[i]], data$Q2_T0, use = "complete.obs")   
+  
+ 
+  model_summary <- summary(fm)   
+  p_values <- model_summary$coefficients[, "Pr(>|t|)"]  
+  fixed_effects_summary <- coef(fm)
+  predictors <- names(fixed_effects_summary)
+  
+ 
+  for (j in 1:length(predictors)) {
+    result_row <- data.frame(
+      dependent_var = i,
+      predictor = predictors[j],
+      correlation_with_Q2 = ifelse(predictors[j] == "Q2_T0", correlation, NA),
+      fixed_effect = fixed_effects_summary[j],
+      p_value = p_values[j],
+      stringsAsFactors = FALSE
+    )
+    all_results <- rbind(all_results, result_row)
+  }
+  
+  if (which(i == var_columns) %% 10 == 0) {
+    cat("已完成", which(i == var_columns), "/", length(var_columns), "个变量\n")
+  }
+}  
+
+q2_mask <- all_results$predictor == "Q2_T0"
+all_results$p_value_fdr <- NA
+all_results$p_value_fdr[q2_mask] <- p.adjust(all_results$p_value[q2_mask], method = "fdr")
+
+fdr_correction_count <- sum(q2_mask)
+cat("总检验数量:", nrow(all_results), "\n")
+cat("Q2_T0检验数量:", fdr_correction_count, "\n")
+cat("FDR校正包含的检验数量（Q2_T0）:", fdr_correction_count, "\n")
+
+library(openxlsx)
+write.xlsx(all_results, file = "Q2_output_fdr_gp_gp_T0.xlsx")
+
+
+
+
+#####mri_y_rsfmr_cor_gp_gp.csv-cbcl_adhd_T0
+
+data <- read.table("/home/disk7/zuyujuan/ABCD/ABCD_5.1/image/cor/LMM/审稿修改/rs_fMRI/base/rsfmr_cor_all_dummy_base_combat.txt", header = TRUE)
+
+var_columns <- names(data)[385:553]
+
+standardize_columns <- c("cbcl_adhd_0", "age_0", "sex1", "race1", "race2", "race3", "race4", "BMI_0", "highest_education", "demo_comb_income_v2", "puberty.score_T0", "ehi_y_ss_score_T0_1", "ehi_y_ss_score_T0_2", "rsfmri_meanmotion","ADHD_anymedication_T0")
+
+data[standardize_columns] <- lapply(data[standardize_columns], scale)
+data[var_columns] <- lapply(data[var_columns], scale)
+
+all_results <- data.frame()
+
+for (i in var_columns) {
+formula <- paste0(i, " ~ cbcl_adhd_0 + age_0 + sex1 + race1 + race2 + race3 + race4 + BMI_0 + highest_education + demo_comb_income_v2 + puberty.score_T0 + ehi_y_ss_score_T0_1 + ehi_y_ss_score_T0_2 + rsfmri_meanmotion +ADHD_anymedication_T0")   
+  
+ fm <- lm(formula, data = data) 
+  
+  correlation <- cor(data[[i]], data$cbcl_adhd_0, use = "complete.obs")   
+  
+  model_summary <- summary(fm)   
+  p_values <- model_summary$coefficients[, "Pr(>|t|)"]  
+  fixed_effects_summary <- coef(fm)
+  predictors <- names(fixed_effects_summary)
+  
+ for (j in 1:length(predictors)) {
+    result_row <- data.frame(
+      dependent_var = i,
+      predictor = predictors[j],
+      correlation_with_adhd = ifelse(predictors[j] == "cbcl_adhd_0", correlation, NA),
+      fixed_effect = fixed_effects_summary[j],
+      p_value = p_values[j],
+      stringsAsFactors = FALSE
+    )
+    all_results <- rbind(all_results, result_row)
+  }
+  
+  if (which(i == var_columns) %% 10 == 0) {
+    cat("已完成", which(i == var_columns), "/", length(var_columns), "个变量\n")
+  }
+}  
+
+adhd_mask <- all_results$predictor == "cbcl_adhd_0"
+all_results$p_value_fdr <- NA
+all_results$p_value_fdr[adhd_mask] <- p.adjust(all_results$p_value[adhd_mask], method = "fdr")
+
+fdr_correction_count <- sum(adhd_mask)
+cat("总检验数量:", nrow(all_results), "\n")
+cat("adhd_0检验数量:", fdr_correction_count, "\n")
+cat("FDR校正包含的检验数量（adhd_0）:", fdr_correction_count, "\n")
+
+library(openxlsx)
+write.xlsx(all_results, file = "adhd_output_fdr_gp_gp_T0.xlsx")
